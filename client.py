@@ -1,3 +1,4 @@
+import threading
 from threading import Thread
 import time
 import os
@@ -9,182 +10,69 @@ import sys
 from state import SharedFolderState
 import shutil
 
-
-state = None
-
-
-class MyFileSystemEventHandler(FileSystemEventHandler):
-    def __init__(self, base_path, client_socket):
-        self._base_path = base_path
-        self._client_socket = client_socket
+state_obj = None
 
 
-    def create_file (self,event):
-        try :
-            global state
-            if state is None :
-                return
-
-            if event.is_directory :
-                file_content = None
-            else :
-                with open( event.src_path, "rb" ) as f :
-                    file_content = f.read( )
-
-            state.update_file(
-                path = self._strip_base_path( event.src_path ),
-                is_directory = event.is_directory,
-                file_content = file_content
-            )
-
-            self._client_socket.send( msgpack.dumps( state.to_dict( ) ) )
-        except PermissionError:
-            time.sleep(2)
-            self.create_file(event)
-        except FileNotFoundError:
-            state.update_file(
-                path = self._strip_base_path( event.src_path ),
-                is_directory = event.is_directory,
-                file_content = file_content
-            )
-
-    def on_created(self, event):
-        """Called when a file or directory is created."""
-        # self.create_file(event)
-        state.update_file(
-            path = self._strip_base_path( event.src_path ),
-            is_directory = event.is_directory,
-            file_content = bytes()
-        )
-
-    def on_moved(self, event):
-        """Called when a file or a directory is moved or renamed."""
-        global state
-        if state is None:
-            return
-
-        state.rename_file(
-            src_path=self._strip_base_path(event.src_path),
-            dest_path=self._strip_base_path(event.dest_path),
-        )
-
-        self._client_socket.send(msgpack.dumps(state.to_dict()))
-
-    def on_deleted(self, event):
-        """Called when a file or directory is deleted."""
-        global state
-        if state is None:
-            return
-
-        state.delete_file(
-            path=self._strip_base_path(event.src_path),
-            is_directory=event.is_directory
-        )
-
-        self._client_socket.send(msgpack.dumps(state.to_dict()))
-
-    def on_modified(self, event):
-        """Called when a file or directory is modified."""
-        # global state
-        # if state is None:
-        #     return
-        #
-        # if event.is_directory:
-        #     return
-        #
-        # try:
-        #     with open(event.src_path, "rb") as f:
-        #         file_content = f.read()
-        # except FileNotFoundError:
-        #     file_content = None
-        #
-        # state.update_file(
-        #     path=self._strip_base_path(event.src_path),
-        #     is_directory=event.is_directory,
-        #     file_content=file_content
-        # )
-        #
-        # self._client_socket.send(msgpack.dumps(state.to_dict()))
+# Cleans the content of the directory
+def clean_directory(base_path):
+    try :
+        shutil.rmtree( base_path )
+    except :
         pass
-    
-    def _strip_base_path(self, path):
-        return os.path.relpath(path, self._base_path)
+
+    try :
+        os.makedirs( base_path )
+    except :
+        pass
+
+# Monitor the directory and send it updated state to the server
+def watch_directory (base_path, client_socket):
+    global state_obj
+    while True:
+        state_obj = SharedFolderState.from_real_dir(base_path,state_obj)
+        # state_obj.print_state()@TODO REMOVE AFTER TESTING
+        print("[CLIENT] Sending state to server")
+        client_socket.send( msgpack.dumps( state_obj.to_dict( ) ) )
+        time.sleep(3)
 
 
-def watch_directory(base_path, client_socket):
-    event_handler = MyFileSystemEventHandler(base_path, client_socket)
+def main ( ) :
+    global state_obj
+    global event
 
-    observer = Observer()
-    observer.schedule(event_handler, base_path, recursive=True)
-    observer.start()
-
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        observer.stop()
-
-    observer.join()
-
-
-def main():
-    global state
-
-    # Read base path from the command line.
-    base_path = sys.argv[1]
+    # Read base path from the command line. @TODO CHANGE TO BE AN INPUT IN THE END
+    print("Please enter the full path to your local shared folder:")
+    base_path = input()
+    # base_path = "C:/Users/User/Downloads/networking_project/Client_Folder_1"
 
     # Clean directory
-    try:
-        shutil.rmtree(base_path)
-    except:
-        pass
-   
-    try:
-        os.makedirs(base_path)
-    except:
-        pass
+    clean_directory(base_path)
 
     # Connect to server
-    client_socket = socket.socket()
-    client_socket.connect(("127.0.0.1", 5055))
+    client_socket = socket.socket( )
+    client_socket.connect( ("127.0.0.1", 5055) )
+    print(f"[CLIENT] Listening to TBD PORT and ADDRESS")
 
     # # Start observing the base path directory.
-    # thread = Thread(target=watch_directory, args=(base_path, client_socket))
-    # thread.start()
-    
+    thread_observer = Thread(target=watch_directory, args=(base_path, client_socket))
+    thread_observer.start()
+
     # Listen to messages from the server
-    unpacker = msgpack.Unpacker(use_list=False, raw=False)
-
-    # Start observing
-    event_handler = MyFileSystemEventHandler(base_path, client_socket)
-
-    observer = Observer()
-    observer.schedule(event_handler, base_path, recursive=True)
-
-    while True:
-        data = client_socket.recv(1024)
-        if not data:
+    unpacker = msgpack.Unpacker( use_list = False, raw = False )
+    while True :
+        # Receive the data
+        data = client_socket.recv( 1024 )
+        if not data :
             break
-
-        unpacker.feed(data)
-
-        for unpacked in unpacker:
-            # We just received our first state, start observing.
-
-            observer.stop()
-
+        unpacker.feed( data )
+        for unpacked in unpacker :
             # Update state
-            state = SharedFolderState.from_dict(unpacked)
-            state.write(base_path)
+            state_obj = SharedFolderState.from_dict( unpacked )
+            state_obj.write_state_to_folder( base_path )
 
-            print("Just received new state with version", state.version) 
-
-            # Restart observer
-            observer = Observer()
-            observer.schedule(event_handler, base_path, recursive=True)
-            observer.start()
+            print( f"[CLIENT] The real folder was updated based on state version {state_obj.version}" )
 
 
-if __name__ == "__main__":
-    main()
 
+if __name__ == "__main__" :
+    main( )
