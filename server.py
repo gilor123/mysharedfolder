@@ -11,7 +11,10 @@ from state import SharedFolderState
 
 PORT = 5055
 ADDRESS = socket.gethostbyname ( socket.gethostname () )
-base_path = "C:/Users/User/Downloads/networking_project/Server_Folder"
+
+# Read base path from the command line.
+print("Please enter the full path to your local shared folder:")
+base_path = input()
 
 # Create base path if doesn't exist
 try:
