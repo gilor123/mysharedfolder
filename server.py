@@ -1,3 +1,7 @@
+# Server.py: Create server and handle client events.
+# The server holds a state of the shared folder and a version of it.
+# Upon receiving messages with states of client the server handle it and updates his state and version if needed.
+
 import socket
 import msgpack
 import os
@@ -5,6 +9,8 @@ import os
 from threading import Thread
 from state import SharedFolderState
 
+PORT = 5055
+ADDRESS = socket.gethostbyname ( socket.gethostname () )
 base_path = "C:/Users/User/Downloads/networking_project/Server_Folder"
 
 # Create base path if doesn't exist
@@ -15,10 +21,9 @@ except:
 
 state_obj = SharedFolderState.from_real_dir(base_path,None)
 state_obj.version = 0
-# state_obj.print_state() @TODO REMOVE AFTER TESTINGS
 clients = []
 
-
+# Recv a message from the client and handle it
 def handle_client(client_socket):
     global state_obj
     unpacker = msgpack.Unpacker(use_list=False, raw=False)
@@ -53,12 +58,13 @@ def handle_client(client_socket):
 def main():
     # Create server
     server = socket.socket()
-    server.bind(("0.0.0.0", 5055))
+    server.bind((ADDRESS, PORT))
     server.listen()
-    print(f"[SERVER] Listening to TBD PORT and ADDRESS")
+    print(f"[SERVER] Listening to port {PORT} ")
 
     while True:
         client_socket, _ = server.accept()
+        print("Sending to a new client the state")
         client_socket.send(msgpack.dumps(state_obj.to_dict()))
 
         clients.append(client_socket)
